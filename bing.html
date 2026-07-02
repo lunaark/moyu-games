@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>老板画的饼，接不接？</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: #eef2f8;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Courier New", monospace;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas {
+    display: block;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    border: 4px solid #c9d6ea; border-radius: 4px;
+    max-width: 100vw; max-height: 100vh;
+    cursor: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// ============ 基础 ============
+const LW = 280, LH = 380;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+function fit() {
+  const scale = Math.max(1, Math.floor(Math.min(
+    window.innerWidth * 0.96 / LW, window.innerHeight * 0.96 / LH)));
+  canvas.width = LW; canvas.height = LH;
+  canvas.style.width = LW * scale + 'px';
+  canvas.style.height = LH * scale + 'px';
+  ctx.imageSmoothingEnabled = false;
+}
+fit();
+window.addEventListener('resize', fit);
+
+const C = {
+  ink: '#1e293b', wall: '#e3eaf5', wallLight: '#d5e0f0', floor: '#d7e3f4',
+  skin: '#ffd29b', suit: '#334155', hairB: '#94a3b8', tie: '#ef4444',
+  shirt: '#2563eb', hair: '#1f2937',
+  real: '#059669', realBg: '#e7f6ef', bing: '#d97706', bingBg: '#fdf3e3',
+  white: '#ffffff', gray: '#64748b', gold: '#d97706', danger: '#ef4444', green: '#059669'
+};
+
+// ============ API ============
+const API = {
+  url: 'https://api.deepseek.com/v1/chat/completions',
+  key: (() => {
+    const m = (location.hash + location.search).match(/k=([A-Za-z0-9\-_]+)/);
+    if (m) { try { localStorage.setItem('moyu_ds_key', m[1]); } catch(e){} return m[1]; }
+    try { return localStorage.getItem('moyu_ds_key') || ''; } catch(e) { return ''; }
+  })(),
+  model: 'deepseek-chat'
+};
+
+// ============ 状态 ============
+const G = window.game = {
+  state: 'title',           // title | loading | play | over
+  t: 0,
+  score: 0, lives: 3,
+  caughtReal: 0, ateBing: 0, dodgedBing: 0, missedReal: 0,
+  best: +(localStorage.getItem('bing_best') || 0),
+  queue: [],                // AI 生成的句子 {t, real}
+  used: [],                 // 已用句子（防重复）
+  bubbles: [],              // 下落中 {text, real, x, y, w, h, vy, lines}
+  boss: { x: LW/2, dir: 1 },
+  player: { x: LW/2 },
+  pointerX: LW/2,
+  spawnTimer: 60,
+  fetching: false,
+  flash: null,              // {txt, color, life}
+  roast: '',                // 结算评语
+  err: ''
+};
+
+// ============ AI：批量生成句子 ============
+async function fetchBatch() {
+  if (G.fetching || !API.key) return;
+  G.fetching = true;
+  try {
+    const avoid = G.used.slice(-24).join('／');
+    const res = await fetch(API.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API.key },
+      body: JSON.stringify({
+        model: API.model,
+        temperature: 1.3,
+        max_tokens: 700,
+        messages: [{ role: 'user', content:
+`你是像素游戏《老板画的饼》的内容生成器。生成10条老板对员工说的话：
+- 约一半是【真福利】：具体、可兑现，有明确数字/时间/动作。例："这月绩效A，多发两千"、"下周一调休一天"
+- 其余是【画饼】：空头承诺、宏大叙事、没有兑现细节。例："跟着我干，三年后你就是合伙人"、"公司好了不会亏待你"
+- 每条不超过16个字，口语化，要有职场梗，两类难度混着来（偶尔来一条乍看像福利的饼）
+- 不要与这些重复：${avoid || '无'}
+只输出 JSON 数组，格式：[{"t":"句子","real":true},...]，不要其他内容。` }]
+      })
+    });
+    const data = await res.json();
+    const raw = data.choices[0].message.content;
+    const m = raw.match(/\[[\s\S]*\]/);
+    const arr = JSON.parse(m ? m[0] : raw);
+    for (const it of arr) {
+      if (it && it.t && !G.used.includes(it.t)) {
+        G.queue.push({ t: String(it.t).slice(0, 18), real: !!it.real });
+        G.used.push(String(it.t));
+      }
+    }
+    G.err = '';
+  } catch (e) {
+    G.err = '王总没网了：' + (e.message || e);
+  }
+  G.fetching = false;
+}
+
+// ============ AI：结算毒舌评语 ============
+async function fetchRoast() {
+  if (!API.key) return;
+  try {
+    const res = await fetch(API.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API.key },
+      body: JSON.stringify({
+        model: API.model,
+        temperature: 1.2,
+        max_tokens: 60,
+        messages: [{ role: 'user', content:
+G.win
+? `你是嘴硬心软的老板王总。员工在"接福利躲画饼"里攒够${G.score}工资分裸辞成功了：接到真福利${G.caughtReal}个、识破你的饼${G.dodgedBing}个、只误吞${G.ateBing}个。
+用王总的口吻说一句酸溜溜的挽留或者嘴硬的送别，不超过26个字，有梗，只输出这句话。`
+: `你是毒舌但嘴硬心软的老板王总。员工刚玩完"接福利躲画饼"：接到真福利${G.caughtReal}个、误吞你画的饼${G.ateBing}个、成功躲掉饼${G.dodgedBing}个、错过福利${G.missedReal}个，总分${G.score}。
+用王总的口吻给他一句现场评语，不超过26个字，毒舌有梗，只输出这句话。` }]
+      })
+    });
+    const data = await res.json();
+    G.roast = data.choices[0].message.content.trim().replace(/^["「]|["」]$/g, '');
+  } catch (e) { G.roast = ''; }
+}
+
+// ============ 输入：跟手移动 ============
+function setPointer(clientX) {
+  const rect = canvas.getBoundingClientRect();
+  G.pointerX = (clientX - rect.left) / rect.width * LW;
+}
+canvas.addEventListener('mousemove', e => setPointer(e.clientX));
+canvas.addEventListener('touchmove', e => { e.preventDefault(); setPointer(e.touches[0].clientX); }, { passive: false });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); setPointer(e.touches[0].clientX); tap(); }, { passive: false });
+canvas.addEventListener('mousedown', tap);
+
+function tap() {
+  if (G.state === 'title') {
+    if (!API.key) return;
+    startGame();
+  } else if (G.state === 'over' && G.t > 40) {
+    G.state = 'title'; G.t = 0;
+  }
+}
+
+function startGame() {
+  G.state = 'loading';
+  G.t = 0; G.score = 0; G.lives = 3;
+  G.caughtReal = 0; G.ateBing = 0; G.dodgedBing = 0; G.missedReal = 0;
+  G.bubbles = []; G.flash = null; G.roast = '';
+  G.spawnTimer = 30;
+  fetchBatch();
+}
+
+// ============ 逻辑 ============
+function wrapText(t) {
+  // 按视觉宽度换行：中文算 1，英文数字算 0.55，避免 iPhone16 这类词被拦腰拆
+  const lines = [];
+  let line = '', wsum = 0;
+  for (const ch of t) {
+    const w = /[\x00-\xff]/.test(ch) ? 0.55 : 1;
+    if (wsum + w > 8 && line) { lines.push(line); line = ''; wsum = 0; }
+    line += ch; wsum += w;
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, 3);
+}
+
+function spawnBubble() {
+  const item = G.queue.shift();
+  if (!item) return;
+  const lines = wrapText(item.t);
+  const w = Math.min(LW - 30, Math.max(...lines.map(l => l.length)) * 10 + 14);
+  const h = lines.length * 12 + 10;
+  // 难度：速度随分数涨
+  const vy = 0.45 + Math.min(0.75, G.score / 400) + Math.random() * 0.1;
+  const x = Math.max(4, Math.min(LW - w - 4, G.boss.x - w / 2 + (Math.random() * 40 - 20)));
+  G.bubbles.push({ text: item.t, real: item.real, x, y: 66, w, h, vy, lines });
+}
+
+function update() {
+  G.t++;
+  // 老板来回踱步
+  G.boss.x += G.boss.dir * 0.6;
+  if (G.boss.x > LW - 40) G.boss.dir = -1;
+  if (G.boss.x < 40) G.boss.dir = 1;
+  // 玩家跟手
+  G.player.x += (G.pointerX - G.player.x) * 0.25;
+  G.player.x = Math.max(16, Math.min(LW - 16, G.player.x));
+
+  if (G.state === 'loading') {
+    if (G.queue.length >= 3) { G.state = 'play'; }
+    return;
+  }
+  if (G.state !== 'play') return;
+
+  // 补弹药
+  if (G.queue.length < 6) fetchBatch();
+
+  // 生成
+  G.spawnTimer--;
+  if (G.spawnTimer <= 0 && G.queue.length > 0) {
+    spawnBubble();
+    G.spawnTimer = Math.max(70, 150 - G.score / 4);
+  }
+
+  // 下落与判定
+  const px0 = G.player.x - 16, px1 = G.player.x + 16;
+  for (let i = G.bubbles.length - 1; i >= 0; i--) {
+    const b = G.bubbles[i];
+    b.y += b.vy;
+    // 接住判定（气泡底部进入玩家区域）
+    if (b.y + b.h >= LH - 46 && b.y + b.h <= LH - 18 &&
+        b.x + b.w > px0 && b.x < px1) {
+      G.bubbles.splice(i, 1);
+      if (b.real) {
+        G.score += 10; G.caughtReal++;
+        G.flash = { txt: '+10 真福利！', color: C.green, life: 40 };
+      } else {
+        G.lives--; G.ateBing++;
+        G.flash = { txt: '这是饼！吃撑 ×' + G.ateBing, color: C.danger, life: 50 };
+        if (navigator.vibrate) navigator.vibrate(120);
+        if (G.lives <= 0) { gameOver(false); return; }
+      }
+      if (G.score >= GOAL) { gameOver(true); return; }
+      continue;
+    }
+    // 落地判定
+    if (b.y > LH - 16) {
+      G.bubbles.splice(i, 1);
+      if (b.real) {
+        G.missedReal++;
+        G.flash = { txt: '福利溜了（不扣分）', color: C.gray, life: 36 };
+      } else {
+        G.score += 3; G.dodgedBing++;
+        G.flash = { txt: '+3 识破了饼', color: C.gold, life: 36 };
+        if (G.score >= GOAL) { gameOver(true); return; }
+      }
+    }
+  }
+
+  if (G.flash && --G.flash.life <= 0) G.flash = null;
+}
+
+const GOAL = 250;   // 攒够工资分 → 裸辞胜利
+
+function gameOver(win) {
+  G.state = 'over'; G.t = 0; G.win = !!win;
+  if (G.score > G.best) { G.best = G.score; localStorage.setItem('bing_best', G.best); }
+  fetchRoast();
+}
+
+// ============ 绘制 ============
+function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x | 0, y | 0, w, h); }
+function text(s, x, y, size, c, align = 'center') {
+  ctx.fillStyle = c; ctx.font = `bold ${size}px "Courier New", monospace`;
+  ctx.textAlign = align; ctx.textBaseline = 'top'; ctx.fillText(s, x, y);
+}
+
+function drawBoss() {
+  const bx = G.boss.x - 15, by = 18;
+  px(bx, by + 22, 30, 26, C.suit);
+  px(bx + 12, by + 26, 6, 10, C.tie);
+  px(bx + 4, by, 22, 22, C.skin);
+  px(bx + 2, by - 4, 26, 8, C.hairB);
+  px(bx + 9, by + 8, 4, 3, C.ink); px(bx + 18, by + 8, 4, 3, C.ink);
+  px(bx + 12, by + 16, 7, 2, C.ink);
+  // 手一挥一挥（扔饼动作）
+  const wave = (G.t >> 4) % 2 ? 0 : 4;
+  px(bx - 6, by + 24 - wave, 8, 5, C.skin);
+}
+
+function drawPlayer() {
+  const x = G.player.x, y = LH - 44;
+  px(x - 10, y + 12, 20, 18, C.shirt);
+  px(x - 7, y - 4, 14, 15, C.skin);
+  px(x - 7, y - 7, 14, 6, C.hair);
+  px(x - 3, y + 1, 2, 2, C.ink); px(x + 3, y + 1, 2, 2, C.ink);
+  // 张开的双手（准备接）
+  px(x - 16, y + 12, 7, 5, C.skin);
+  px(x + 9, y + 12, 7, 5, C.skin);
+}
+
+function drawBubble(b) {
+  // 关键设计：气泡外观完全一致，不许用颜色剧透真假——必须读句子做判断
+  px(b.x, b.y, b.w, b.h, C.white);
+  px(b.x, b.y, b.w, 2, C.hairB);
+  px(b.x, b.y + b.h - 2, b.w, 2, C.hairB);
+  px(b.x, b.y, 2, b.h, C.hairB);
+  px(b.x + b.w - 2, b.y, 2, b.h, C.hairB);
+  // 小尾巴指向老板（都是他说的）
+  px(b.x + b.w / 2 - 2, b.y - 4, 4, 4, C.hairB);
+  b.lines.forEach((l, i) => text(l, b.x + b.w / 2, b.y + 6 + i * 12, 9, C.ink));
+}
+
+function draw() {
+  // 背景
+  px(0, 0, LW, LH, C.wall);
+  for (let y = 0; y < 60; y += 14)
+    for (let x = (y / 14 % 2) * 10; x < LW; x += 20) px(x, y, 9, 13, C.wallLight);
+  px(0, LH - 24, LW, 24, C.floor);
+  px(0, LH - 24, LW, 2, '#c3d0e5');
+
+  drawBoss();
+  G.bubbles.forEach(drawBubble);
+  drawPlayer();
+
+  // HUD
+  text('工资分', 8, 6, 9, C.gray, 'left');
+  text(String(G.score), 8, 16, 16, C.gold, 'left');
+  for (let i = 0; i < 3; i++) {
+    const x = LW - 16 - i * 15;
+    // 胃（吃撑了就没了）
+    px(x, 8, 11, 11, i < G.lives ? C.danger : '#cbd5e1');
+    px(x + 3, 5, 5, 4, i < G.lives ? C.danger : '#cbd5e1');
+  }
+  if (G.flash) {
+    ctx.globalAlpha = Math.min(1, G.flash.life / 15);
+    text(G.flash.txt, G.player.x, LH - 70, 11, G.flash.color);
+    ctx.globalAlpha = 1;
+  }
+  if (G.err && G.state === 'play') text(G.err.slice(0, 24), LW/2, LH - 12, 8, C.danger);
+
+  if (G.state === 'title') {
+    ctx.globalAlpha = 0.88; px(0, 0, LW, LH, C.wall); ctx.globalAlpha = 1;
+    drawBoss();
+    text('老板画的饼', LW/2, 88, 24, C.ink);
+    text('接不接？', LW/2, 116, 16, C.bing);
+    px(60, 142, LW - 120, 2, '#c9d6ea');
+    text('真福利 → 移过去接住 +10', LW/2, 154, 11, C.green);
+    text('画的饼 → 躲开让它摔碎 +3', LW/2, 172, 11, C.bing);
+    text('吃下 3 张饼 → 撑到离职', LW/2, 190, 11, C.danger);
+    text('攒够 250 分 → 裸辞走人！', LW/2, 208, 11, C.ink);
+    text('每一句都是 AI 现场编的', LW/2, 228, 10, C.gray);
+    text('没有一局重样', LW/2, 242, 10, C.gray);
+    if (!API.key) {
+      text('⚠ 链接后加 #k=你的DeepSeekKey', LW/2, 262, 9, C.danger);
+    } else if ((G.t >> 4) % 2) {
+      text('点击上班', LW/2, 266, 13, C.green);
+    }
+    if (G.best > 0) text('最高工资分: ' + G.best, LW/2, 296, 9, C.gray);
+  }
+
+  if (G.state === 'loading') {
+    ctx.globalAlpha = 0.7; px(0, 0, LW, LH, C.wall); ctx.globalAlpha = 1;
+    const dots = '...'.slice(0, 1 + (G.t >> 4) % 3);
+    text('王总正在酝酿新饼' + dots, LW/2, 170, 12, C.ink);
+    if (G.err) text(G.err.slice(0, 26), LW/2, 200, 9, C.danger);
+  }
+
+  if (G.state === 'over') {
+    ctx.globalAlpha = 0.9; px(0, 0, LW, LH, C.wall); ctx.globalAlpha = 1;
+    if (G.win) text('攒够了，裸辞！', LW/2, 60, 20, C.green);
+    else text('吃撑了，离职', LW/2, 60, 20, C.danger);
+    text('工资分', LW/2, 100, 10, C.gray);
+    text(String(G.score), LW/2, 114, 24, C.gold);
+    text(`接住福利 ${G.caughtReal} · 躲掉饼 ${G.dodgedBing}`, LW/2, 150, 10, C.ink);
+    text(`误吞饼 ${G.ateBing} · 错过福利 ${G.missedReal}`, LW/2, 166, 10, C.ink);
+    if (G.score >= G.best && G.score > 0) text('★ 新纪录 ★', LW/2, 188, 11, C.bing);
+    // 王总现场评语（AI 生成）
+    px(20, 210, LW - 40, 64, C.white);
+    px(20, 210, LW - 40, 2, C.hairB); px(20, 272, LW - 40, 2, C.hairB);
+    text('王总的离职评语：', LW/2, 218, 9, C.gray);
+    if (G.roast) {
+      wrapText(G.roast).forEach((l, i) => text(l, LW/2, 234 + i * 13, 10, C.ink));
+    } else {
+      text('王总正在憋评语' + '...'.slice(0, 1 + (G.t >> 4) % 3), LW/2, 240, 10, C.gray);
+    }
+    if (G.t > 40 && (G.t >> 4) % 2) text('点击再来一局', LW/2, 296, 12, C.green);
+  }
+}
+
+(function loop() { update(); draw(); requestAnimationFrame(loop); })();
+// 暴露给自动测试
+window.sendPointer = x => { G.pointerX = x; };
+</script>
+</body>
+</html>
