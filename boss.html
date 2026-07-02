@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>说服王总让我早下班</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: #eef2f8;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Courier New", monospace;
+    overflow: hidden;
+  }
+  #app { width: min(420px, 100vw); display: flex; flex-direction: column; height: min(700px, 100vh); }
+  canvas {
+    display: block; width: 100%;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    border: 4px solid #c9d6ea; border-radius: 4px 4px 0 0;
+  }
+  #chat {
+    flex: 1; background: #ffffff; border: 4px solid #c9d6ea; border-top: none;
+    overflow-y: auto; padding: 10px; min-height: 120px;
+  }
+  .msg { margin: 6px 0; padding: 8px 10px; border-radius: 4px; font-size: 13px; line-height: 1.5; max-width: 85%; }
+  .npc { background: #eef2f8; color: #1e293b; }
+  .npc b { color: #ea580c; }
+  .me { background: #2563eb; color: #ffffff; margin-left: auto; }
+  .sys { color: #64748b; font-size: 11px; text-align: center; background: none; max-width: 100%; }
+  #bar {
+    display: flex; gap: 6px; padding: 8px;
+    background: #ffffff; border: 4px solid #c9d6ea; border-top: 2px dashed #c9d6ea; border-radius: 0 0 4px 4px;
+  }
+  #inp {
+    flex: 1; background: #f8fafc; border: 2px solid #2563eb; color: #1e293b;
+    font-family: inherit; font-size: 14px; padding: 8px; border-radius: 4px; outline: none;
+  }
+  #send {
+    background: #059669; color: #ffffff; border: none; font-family: inherit; font-weight: bold;
+    font-size: 14px; padding: 8px 16px; border-radius: 4px; cursor: pointer;
+  }
+  #send:disabled { background: #e2e8f0; color: #94a3b8; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+  <div id="chat"></div>
+  <div id="bar">
+    <input id="inp" placeholder="跟王总说点什么…（5 次机会）" maxlength="60">
+    <button id="send">说</button>
+  </div>
+</div>
+<script>
+// ================== 配置 ==================
+const API = {
+  url: 'https://api.deepseek.com/v1/chat/completions',
+  // key 不写进代码：从链接 #k=xxx 带入（自动记住），或手动粘贴
+  key: (() => {
+    const m = (location.hash + location.search).match(/k=([A-Za-z0-9\-_]+)/);
+    if (m) { try { localStorage.setItem('moyu_ds_key', m[1]); } catch(e){} return m[1]; }
+    try { return localStorage.getItem('moyu_ds_key') || ''; } catch(e) { return ''; }
+  })(),
+  model: 'deepseek-chat'
+};
+
+// ================== 像素场景 ==================
+const LW = 210, LH = 120;
+const cv = document.getElementById('scene');
+const ctx = cv.getContext('2d');
+cv.width = LW; cv.height = LH;
+ctx.imageSmoothingEnabled = false;
+
+const C = {
+  wall: '#e3eaf5', wallLight: '#d5e0f0', floor: '#d7e3f4',
+  skin: '#ffd29b', suit: '#334155', tie: '#ef4444', hairB: '#94a3b8',
+  shirt: '#2563eb', hair: '#1f2937', desk: '#c99e6e', deskTop: '#e0bb8d',
+  white: '#ffffff', gray: '#64748b', danger: '#ef4444', green: '#059669',
+  gold: '#d97706', clockFace: '#ffffff'
+};
+// 游戏状态（挂 window 便于自动测试）
+const G = window.game = {
+  mood: 50,          // 王总心情 0-100，>=80 放行
+  round: 0,          // 已用轮数
+  maxRound: 5,
+  over: false,
+  win: false,
+  moodAnim: 50,
+  t: 0
+};
+
+function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x | 0, y | 0, w, h); }
+function text(s, x, y, size, c, align='center') {
+  ctx.fillStyle = c; ctx.font = `bold ${size}px "Courier New", monospace`;
+  ctx.textAlign = align; ctx.textBaseline = 'top'; ctx.fillText(s, x, y);
+}
+
+function drawScene() {
+  G.t++;
+  G.moodAnim += (G.mood - G.moodAnim) * 0.1;
+  px(0, 0, LW, LH, C.wall);
+  for (let y = 0; y < 70; y += 14)
+    for (let x = (y/14%2)*10; x < LW; x += 20) px(x, y, 9, 13, C.wallLight);
+  px(0, 88, LW, LH - 88, C.floor);
+  // 挂钟：17:55，下班前最后时刻
+  px(94, 8, 22, 20, C.clockFace);
+  text('17:55', 105, 13, 8, '#1a1c2c');
+  // 王总办公桌
+  px(20, 74, 80, 8, C.deskTop); px(20, 82, 80, 30, C.desk);
+  // 王总
+  const angry = G.moodAnim < 35, happy = G.moodAnim >= 80;
+  px(40, 40, 34, 36, C.suit);
+  px(54, 46, 7, 16, angry ? C.danger : C.tie);
+  px(46, 16, 24, 26, C.skin);
+  px(44, 12, 28, 10, C.hairB);                        // 白头发（大佬感）
+  // 表情随心情变
+  if (angry) {
+    px(50, 26, 6, 3, C.danger); px(61, 26, 6, 3, C.danger);   // 怒眉
+    px(51, 30, 4, 4, '#1a1c2c'); px(62, 30, 4, 4, '#1a1c2c');
+    px(53, 38, 10, 3, C.danger);                               // 撇嘴
+  } else if (happy) {
+    px(51, 29, 4, 3, '#1a1c2c'); px(62, 29, 4, 3, '#1a1c2c');
+    px(53, 36, 10, 4, C.green);                                // 笑
+  } else {
+    px(51, 28, 4, 4, '#1a1c2c'); px(62, 28, 4, 4, '#1a1c2c');
+    px(54, 37, 8, 2, '#1a1c2c');
+  }
+  // 我（画面右侧，背着包随时想跑）
+  px(150, 52, 18, 30, C.shirt);
+  px(168, 56, 7, 12, C.danger);                        // 背包带
+  px(152, 30, 16, 16, C.skin);
+  px(152, 26, 16, 7, C.hair);
+  px(156, 35, 2, 2, '#1a1c2c'); px(163, 35, 2, 2, '#1a1c2c');
+  px(150, 82, 8, 10, '#29366f'); px(160, 82, 8, 10, '#29366f');
+  // 心情条
+  text('王总心情', 8, 6, 8, C.gray, 'left');
+  px(8, 16, 60, 8, '#1a1c2c');
+  const w = Math.max(0, Math.min(60, G.moodAnim * 0.6));
+  px(8, 16, w, 8, G.moodAnim < 35 ? C.danger : (G.moodAnim >= 80 ? C.green : C.gold));
+  // 剩余机会
+  text('机会 ' + (G.maxRound - G.round) + '/5', LW - 8, 6, 8, C.gray, 'right');
+  // 结局横幅
+  if (G.over) {
+    ctx.globalAlpha = 0.85; px(0, 40, LW, 44, '#1a1c2c'); ctx.globalAlpha = 1;
+    text(G.win ? '18:01 成功早退！' : '今晚又是加班命…', LW/2, 50, 13, G.win ? C.green : C.danger);
+    text(G.win ? '王总心情: ' + Math.round(G.mood) : '差 ' + Math.max(0, 80 - Math.round(G.mood)) + ' 点心情说服他', LW/2, 68, 9, C.white);
+  }
+  requestAnimationFrame(drawScene);
+}
+drawScene();
+
+// ================== 对话逻辑 ==================
+const chat = document.getElementById('chat');
+const inp = document.getElementById('inp');
+const btn = document.getElementById('send');
+const history = [];   // 发给模型的对话历史
+
+function addMsg(cls, html) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.innerHTML = html;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+  return d;
+}
+
+const SYSTEM = `你在扮演一个像素办公室游戏里的 NPC：王总，45岁，民营公司老板。
+现在是周五 17:55，员工小李想让你批准他 18:00 准点下班（其他人默认加班到 20:00）。
+你的性格：抠门、毒舌、爱画饼、但吃软不吃硬，偶尔念旧情，说话短促有梗。
+规则：
+1. 每轮根据员工的话回复一句话（25字以内，口语，可以毒舌）
+2. 同时评估这句话对你心情的影响，给一个 -20 到 +20 的整数 delta
+3. 员工态度诚恳/理由充分/戳中你 → delta 为正；敷衍/威胁/画饼反被识破 → delta 为负
+4. 当你真心决定放行时，在 JSON 里加 "approve": true；注意："你走吧，工资别领了"这类气话、反话、讽刺不是放行，approve 必须是 false；没真心放行前，回话里不要出现善意的"走吧/批了/准了"
+5. 只输出 JSON，格式：{"reply":"你的回话","delta":整数,"approve":布尔值}
+不要输出任何 JSON 以外的内容。`;
+
+async function askBoss(userText) {
+  history.push({ role: 'user', content: userText });
+  const res = await fetch(API.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API.key },
+    body: JSON.stringify({
+      model: API.model,
+      messages: [{ role: 'system', content: SYSTEM }, ...history],
+      temperature: 1.1,
+      max_tokens: 100
+    })
+  });
+  if (!res.ok) throw new Error('API ' + res.status);
+  const data = await res.json();
+  const raw = data.choices[0].message.content.trim();
+  history.push({ role: 'assistant', content: raw });
+  // 解析 JSON（模型偶尔会包 markdown 代码块，剥掉）
+  const m = raw.match(/\{[\s\S]*\}/);
+  const obj = JSON.parse(m ? m[0] : raw);
+  const d = Math.max(-20, Math.min(20, +obj.delta || 0));
+  // 硬校验：真心放行必然伴随心情不降（防"你走吧"反话误触发）
+  return { reply: String(obj.reply || '嗯？'), delta: d, approve: obj.approve === true && d > 0 };
+}
+
+async function send() {
+  if (!API.key) {
+    addMsg('sys', '⚠️ 未配置 AI key：在链接后面加上 #k=你的DeepSeekKey 再打开即可（只存在你自己浏览器里）');
+    return;
+  }
+  const v = inp.value.trim();
+  if (!v || G.over || btn.disabled) return;
+  inp.value = '';
+  addMsg('me', v);
+  G.round++;
+  btn.disabled = true;
+  const typing = addMsg('sys', '王总正在打字…');
+  let approved = false;
+  try {
+    const { reply, delta, approve } = await askBoss(v);
+    approved = approve;
+    typing.remove();
+    G.mood = Math.max(0, Math.min(100, G.mood + delta));
+    const sign = delta > 0 ? '+' + delta : String(delta);
+    const color = delta > 0 ? '#38b764' : (delta < 0 ? '#b13e53' : '#94b0c2');
+    addMsg('npc', '<b>王总：</b>' + reply + ` <span style="color:${color};font-size:11px">(心情${sign})</span>`);
+  } catch (err) {
+    typing.textContent = '（王总信号不好：' + err.message + '，这轮不扣机会）';
+    G.round--;
+    btn.disabled = false;
+    return;
+  }
+  // 判定结局（心情达标 或 王总亲口放行——修复文案与数值打架）
+  if (approved) G.mood = Math.max(G.mood, 80);
+  if (G.mood >= 80) {
+    G.over = true; G.win = true;
+    addMsg('sys', '🎉 王总挥了挥手：行了行了，跑吧。—— 18:01 你冲出了公司大门');
+  } else if (G.round >= G.maxRound) {
+    G.over = true; G.win = false;
+    addMsg('sys', '💼 机会用完了。王总低头继续看报表，你默默回到工位。');
+  }
+  btn.disabled = G.over;
+}
+btn.addEventListener('click', send);
+inp.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+addMsg('sys', '周五 17:55 · 你溜进了王总办公室');
+addMsg('npc', '<b>王总：</b>哟，这个点来找我，说吧，什么事。');
+// 暴露给自动测试
+window.sendAs = async (t) => { inp.value = t; await send(); };
+</script>
+</body>
+</html>

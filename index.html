@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>打工人像素三部曲</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    background: #eef2f8;
+    font-family: "Courier New", monospace;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px 16px;
+  }
+  .wrap { max-width: 420px; width: 100%; }
+  h1 { color: #1e293b; font-size: 26px; text-align: center; letter-spacing: 2px; }
+  .sub { color: #64748b; font-size: 12px; text-align: center; margin: 10px 0 26px; line-height: 1.7; }
+  .sub b { color: #2563eb; }
+  a.card {
+    display: block; background: #ffffff; border: 3px solid #c9d6ea; border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 14px; text-decoration: none;
+    transition: transform .12s, border-color .12s;
+  }
+  a.card:hover { transform: translateY(-2px); border-color: #2563eb; }
+  .num { color: #2563eb; font-size: 11px; font-weight: bold; letter-spacing: 1px; }
+  .name { color: #1e293b; font-size: 18px; font-weight: bold; margin: 4px 0; }
+  .desc { color: #64748b; font-size: 12px; line-height: 1.6; }
+  .tag { display: inline-block; background: #eef2f8; color: #2563eb; font-size: 10px;
+         padding: 2px 8px; border-radius: 4px; margin-top: 8px; font-weight: bold; }
+  .foot { color: #94a3b8; font-size: 10px; text-align: center; margin-top: 22px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>打工人像素三部曲</h1>
+  <p class="sub">三个休闲小游戏 · 从写代码到测试修 bug 到录屏<br>全程由 AI 一个人完成 · <b>手机电脑都能玩</b></p>
+
+  <a class="card" href="moyu.html">
+    <div class="num">GAME 01</div>
+    <div class="name">摸鱼快跑</div>
+    <div class="desc">按住摸鱼涨积分，老板随时回头，被抓三次请去财务结算。你能拿到"摸鱼宗师"称号吗？</div>
+    <span class="tag">反应力</span>
+  </a>
+
+  <a class="card" href="rush.html">
+    <div class="num">GAME 02</div>
+    <div class="name">下班冲刺</div>
+    <div class="desc">下班号角吹响！跳过办公椅、滑铲躲飞来的文件夹，看你能冲出多少米。</div>
+    <span class="tag">跑酷</span>
+  </a>
+
+  <a class="card" href="boss.html">
+    <div class="num">GAME 03 · AI NPC</div>
+    <div class="name">说服王总让我早下班</div>
+    <div class="desc">周五 17:55，你有 5 句话的机会说服王总放你准点走。他没有台词本，你说什么他真的听——嘴甜有用，威胁没门。</div>
+    <span class="tag">AI 对话</span>
+  </a>
+
+  <p class="foot">纯网页 · 无需安装 · 游戏三需自备 DeepSeek key（链接加 #k=你的key）</p>
+</div>
+</body>
+</html>
